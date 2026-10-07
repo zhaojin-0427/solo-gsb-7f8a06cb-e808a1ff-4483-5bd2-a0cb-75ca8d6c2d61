@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>本地 mTLS 信任根轮换演练</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>本地 mTLS 信任根（根 A → 根 B）轮换演练</h1>
+    <div class="phasebar">
+      <span class="muted">当前阶段：</span>
+      <span id="phase" class="phase">…</span>
+      <span id="round" class="muted"></span>
+      <span id="fail-banner" class="banner hidden"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="grid">
+      <div class="card" id="card-control">
+        <h2>控制服务</h2>
+        <div class="kv"><span>根 A 指纹</span><code id="fp-root-a">—</code></div>
+        <div class="kv"><span>根 B 指纹</span><code id="fp-root-b">—</code></div>
+        <div class="kv"><span>网关 CA</span><code id="fp-server-ca">—</code></div>
+        <div class="kv"><span>网关证书</span><code id="fp-server">—</code></div>
+        <div class="kv"><span>金丝雀 A</span><code id="fp-canary-a">—</code></div>
+        <div class="kv"><span>金丝雀 B</span><code id="fp-canary-b">未签发</code></div>
+      </div>
+
+      <div class="card" id="card-gateway">
+        <h2>网关（数据面真实握手）</h2>
+        <div class="kv"><span>信任代际</span><code id="gw-trust">—</code></div>
+        <div class="kv"><span>信任根指纹</span><code id="gw-fps">—</code></div>
+        <div class="kv"><span>在途/已完成请求</span><code id="gw-stats">—</code></div>
+        <div class="kv"><span>混沌：拒绝 B 链</span><code id="gw-rejectb">关</code></div>
+        <div class="note">切换时先排空已建立的探测请求（最长 3 秒延迟探测可观察），之后的新握手按新信任集裁决。</div>
+      </div>
+
+      <div class="card" id="card-c1">
+        <h2>客户端 1（独立卷）</h2>
+        <div class="kv"><span>生效代际</span><code id="c1-gen">—</code></div>
+        <div class="kv"><span>生效证书指纹</span><code id="c1-fp">—</code></div>
+        <div class="kv"><span>候选 B 指纹</span><code id="c1-cand">—</code></div>
+        <div class="kv"><span>状态</span><code id="c1-line" class="muted">—</code></div>
+      </div>
+
+      <div class="card" id="card-c2">
+        <h2>客户端 2（独立卷）</h2>
+        <div class="kv"><span>生效代际</span><code id="c2-gen">—</code></div>
+        <div class="kv"><span>生效证书指纹</span><code id="c2-fp">—</code></div>
+        <div class="kv"><span>候选 B 指纹</span><code id="c2-cand">—</code></div>
+        <div class="kv"><span>状态</span><code id="c2-line" class="muted">—</code></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>轮换步骤（每步携带预期阶段；重复同一步只返回原结果；过期阶段 409）</h2>
+      <ol id="steps" class="steps">
+        <li data-step="gateway_ab">
+          <strong>1. 发起轮换：网关同时信任 A/B</strong>
+          <p>签发 B（仅一次）、网关切换 A+B 并向客户端下发候选 B；<em>配置写入不等于握手成功</em>。</p>
+          <div class="row">
+            <button data-act="start">发起根 B 轮换</button>
+            <button data-act="arm-gateway-ab">演练：本步生效后丢弃一次回执</button>
+            <span class="step-status" data-status="gateway_ab"></span>
+          </div>
+        </li>
+        <li data-step="confirm_b">
+          <strong>2. 确认 B 握手成功（金丝雀 B 真实握手）</strong>
+          <p>确认成功后才允许切换任一客户端；失败则停留在 A/B 共信阶段。</p>
+          <div class="row">
+            <button data-act="confirm_b">用金丝雀 B 发起真实握手</button>
+            <span class="step-status" data-status="confirm_b"></span>
+          </div>
+        </li>
+        <li data-step="switch-client1">
+          <strong>3a. 客户端 1：候选 B 先试握手，成功才切换</strong>
+          <p>失败保持 A，A、B 客户端在共信阶段都仍可连接。</p>
+          <div class="row">
+            <button data-act="switch-client1">客户端 1 试 B 并切换</button>
+            <button data-act="arm-client1">演练：切换生效后丢弃一次回执</button>
+            <span class="step-status" data-status="switch-client1"></span>
+          </div>
+        </li>
+        <li data-step="switch-client2">
+          <strong>3b. 客户端 2：候选 B 先试握手，成功才切换</strong>
+          <div class="row">
+            <button data-act="switch-client2">客户端 2 试 B 并切换</button>
+            <button data-act="arm-client2">演练：切换生效后丢弃一次回执</button>
+            <span class="step-status" data-status="switch-client2"></span>
+          </div>
+        </li>
+        <li data-step="retire_a">
+          <strong>4. 退役 A：仅信任 B，并验证旧 A 新握手失败 / B 继续成功</strong>
+          <div class="row">
+            <button data-act="retire_a">退役根 A</button>
+            <span class="step-status" data-status="retire_a"></span>
+          </div>
+        </li>
+      </ol>
+      <div class="row">
+        <button data-act="reset" class="danger">复位演练（各方回到仅 A，B 不重签）</button>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>手动真实握手探测</h2>
+        <div class="row">
+          <label>发起方
+            <select id="probe-actor">
+              <option value="canary">控制服务金丝雀</option>
+              <option value="client1">客户端 1（本进程证书）</option>
+              <option value="client2">客户端 2（本进程证书）</option>
+            </select>
+          </label>
+          <label>代际
+            <select id="probe-gen">
+              <option value="effective">生效证书</option>
+              <option value="A">A</option>
+              <option value="B">B（候选）</option>
+            </select>
+          </label>
+          <label>探测延迟（0–3 秒，观察切换排空）
+            <input id="probe-delay" type="number" min="0" max="3" step="0.5" value="0" style="width:6em" />
+          </label>
+          <button data-act="probe">发起 TLS 握手</button>
+        </div>
+        <pre id="probe-out" class="output">尚无探测。</pre>
+      </div>
+
+      <div class="card">
+        <h2>混沌开关 / 回执丢弃演练</h2>
+        <div class="row">
+          <button data-act="reject-on">网关开始拒绝 B 链（制造 B 试握手失败）</button>
+          <button data-act="reject-off">解除拒绝</button>
+        </div>
+        <p class="note">
+          典型演练：发起轮换并确认共信后开启“拒绝 B”，此时确认 B 或客户端试 B 都会真实失败并停在 A/B 共信阶段；
+          解除后重放/重试即可继续。回执丢弃按钮在对应步骤生效后让代理只丢一次回执（状态其实已持久化，安全重试）。
+        </p>
+        <h2>事件日志</h2>
+        <pre id="events" class="output small"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

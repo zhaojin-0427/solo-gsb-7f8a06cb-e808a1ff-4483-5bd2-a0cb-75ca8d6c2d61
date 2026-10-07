@@ -1,0 +1,86 @@
+services:
+  control:
+    build: .
+    image: mtls-rotation-lab:latest
+    environment:
+      MTLS_ROLE: control
+      DATA_DIR: /data
+      GATEWAY_HOST: gateway
+      GATEWAY_TLS_PORT: "8443"
+      GATEWAY_AGENT_URL: http://gateway:8081
+      CLIENT1_AGENT_URL: http://client1:8081
+      CLIENT2_AGENT_URL: http://client2:8081
+      PROBE_GATEWAY_HOST: gateway
+      PROBE_GATEWAY_PORT: "8443"
+    ports:
+      - "8000:8000"
+    volumes:
+      - control-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/state', timeout=2).status==200 else 1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  gateway:
+    image: mtls-rotation-lab:latest
+    build: .
+    environment:
+      MTLS_ROLE: gateway
+      DATA_DIR: /data
+      TLS_PORT: "8443"
+      AGENT_PORT: "8081"
+      CONTROL_HOST: control
+      CONTROL_PORT: "8000"
+      GATEWAY_HOST: gateway
+    volumes:
+      - gateway-data:/data
+    depends_on:
+      control:
+        condition: service_healthy
+    restart: unless-stopped
+
+  client1:
+    image: mtls-rotation-lab:latest
+    build: .
+    environment:
+      MTLS_ROLE: client
+      DATA_DIR: /data
+      CLIENT_NAME: client1
+      AGENT_PORT: "8081"
+      CONTROL_HOST: control
+      CONTROL_PORT: "8000"
+      GATEWAY_HOST: gateway
+      GATEWAY_TLS_PORT: "8443"
+    volumes:
+      - client1-data:/data
+    depends_on:
+      control:
+        condition: service_healthy
+    restart: unless-stopped
+
+  client2:
+    image: mtls-rotation-lab:latest
+    build: .
+    environment:
+      MTLS_ROLE: client
+      DATA_DIR: /data
+      CLIENT_NAME: client2
+      AGENT_PORT: "8081"
+      CONTROL_HOST: control
+      CONTROL_PORT: "8000"
+      GATEWAY_HOST: gateway
+      GATEWAY_TLS_PORT: "8443"
+    volumes:
+      - client2-data:/data
+    depends_on:
+      control:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  control-data:
+  gateway-data:
+  client1-data:
+  client2-data:
